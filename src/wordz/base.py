@@ -36,7 +36,7 @@ class Combinator:
         self.check_which(self.bin_combinator)
         self.check_which(self.bin_rli2)
         if not self.checks_ok:
-            print('Couldn\'t start, fixme')  # TODO: XXX
+            raise Exception('Failed on startup')
             sys.exit(1)
 
     def check_which(self, name):
@@ -44,7 +44,7 @@ class Combinator:
             logs.logger.error(f'Binary `{name}` not found - consider adding it to $PATH environment variable')
             self.checks_ok = False
 
-    def check_files(self, *paths):
+    def exist(self, *paths):
         for path in paths:
             if not pathlib.Path(path).is_file():
                 logs.logger.debug(f'Resource `{path}` not found, skipping')
@@ -72,12 +72,12 @@ class Combinator:
         return pathlib.Path(f'{dest_dir}/{filename}')
 
     def sort(self, source, output=None, unique=False):
-        extra_params = ''
         if output is None:
             output = source
+        cmd = f'{self.sort_snippet} {source} -o {output}'
         if unique:
-            extra_params += ' -u'
-        self.run_shell(f'{self.sort_snippet} {source} -o {output} {extra_params}')
+            cmd += ' -u'
+        self.run_shell(cmd)
 
     def copy(self, source, destination):
         logs.logger.debug(f'Copying `{source}` to {destination}')
@@ -95,7 +95,7 @@ class Combinator:
 
     def delete(self, destination):
         logs.logger.debug(f'Deleting `{destination}`')
-        pathlib.Path.unlink(destination)
+        pathlib.Path.unlink(destination, missing_ok=True)
 
     def compare(self, left, right, output, append=False):
         redir = '>>' if append else '>'
@@ -128,7 +128,7 @@ class Combinator:
     def combine(self, method, left, right, dest_dir=None):
         if dest_dir is None:
             dest_dir = self.temp_dir
-        if self.check_files(left, right):
+        if self.exist(left, right):
             name = None
             if method is self.RIGHT:
                 name = f'{left.stem}+{right.stem}'
@@ -159,10 +159,12 @@ class Combinator:
         for wordlist in wordlists:
             if wordlist is None:
                 continue
+            if wordlist.stat().st_size == 0:
+                raise Exception(f'Wordlist {wordlist} is empty, something is not right. Aborting')
             wordlists_arg.append(str(wordlist))
         wordlists_arg = ' '.join(wordlists_arg)
         # NOTE: Passing too many big files to sort directly leads to random segfaults.
-        pathlib.Path.unlink(destination, missing_ok=True)
+        self.delete(destination)
         sort_cmd = f'awk "length >= {self.min_length}" {wordlists_arg} | {self.sort_snippet} | uniq > '
         if compare:
             self.run_shell(f'{sort_cmd} {output_temp}')
@@ -174,25 +176,27 @@ class Combinator:
 
     def concat(self, destination, wordlists):
         logs.logger.debug(f'Concatenating: {destination}')
-        pathlib.Path.unlink(destination, missing_ok=True)
+        self.delete(destination)
         for wordlist in wordlists:
             self.append(wordlist, destination)
 
-    def sort_basic_extended(self, path, list_prefix):
-        basic = pathlib.Path(self.base_dir, path, f'{list_prefix}-basic.txt')
-        extended = pathlib.Path(self.base_dir, path, f'{list_prefix}-extended.txt')
-        output = pathlib.Path(self.base_dir, path, f'{list_prefix}-all.txt')
-        self.sort(basic, self.temp(f'{list_prefix}-sorted1.txt'))
-        self.sort(extended, self.temp(f'{list_prefix}-sorted2.txt'))
-        self.compare(self.temp(f'{list_prefix}-sorted1.txt'), self.temp(f'{list_prefix}-sorted2.txt'), extended)
-        self.delete(basic)
-        self.move(self.temp(f'{list_prefix}-sorted1.txt'), basic)
-        self.concat(output, [basic, extended])
-        self.sort(output)
+    def diff(self, path, list_prefix, left='basic', right='extended', output='all'):
+        left_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{left}.txt')
+        right_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{right}.txt')
+        output_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{output}.txt')
+        left_temp = self.temp(f'{list_prefix}-diff-{left}.txt')
+        right_temp = self.temp(f'{list_prefix}-diff-{right}.txt')
+        self.sort(left_fil, left_temp)
+        self.sort(right_fil, right_temp)
+        self.compare(left_temp, right_temp, right_fil)
+        self.delete(left_fil)
+        self.move(left_temp, left_fil)
+        self.concat(output_fil, [left_fil, right_fil])
+        self.sort(output_fil)
 
     def run(self):
         time_start = datetime.datetime.now()
-        logs.logger.info(f'Processing with class: {self.__class__.__name__}')
+        logs.logger.info(f'Processing with class: {type(self).__name__}')
         logs.logger.info(f'Base directory: {self.base_dir}')
         logs.logger.info(f'Temporary directory: {self.temp_dir}')
         logs.logger.info(f'Output directory: {self.output_dir}')

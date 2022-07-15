@@ -1,0 +1,18 @@
+[paths]
+source =
+   src
+   */site-packages
+
+[run]
+branch = true
+parallel = true
+source =
+   wordz
+   tests
+omit =
+   tests/data/*
+   tests/conftest.py
+
+[report]
+show_missing = true
+precision = 2

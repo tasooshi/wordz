@@ -19,8 +19,12 @@ def class_import(path):
         spec.loader.exec_module(module)
     except (AttributeError, ValueError, FileNotFoundError):
         raise Exception(f'Could not import class from `{path}`')
-    return getattr(module, class_name)
-
+    try:
+        cls = getattr(module, class_name)
+    except AttributeError:
+        raise Exception(f'Class not found: `{path}`')
+    else:
+        return cls
 
 def get_parser():
     cpu_count = multiprocessing.cpu_count()
@@ -32,9 +36,9 @@ def get_parser():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.print_usage = parser.print_help
-    parser.add_argument('-p', '--path', required=True, help='Class path (e.g. classes/passwords.py::ExtraPasswords)')
+    parser.add_argument('-p', '--path', required=True, default=argparse.SUPPRESS, help='Class path (e.g. classes/passwords.py::ExtraPasswords)')
     parser.add_argument('-b', '--base-dir', default=base_dir, help='Base directory path')
-    parser.add_argument('-t', '--temp-dir', help='Temporary directory path')
+    parser.add_argument('-t', '--temp-dir', default='tmp', help='Temporary directory path')
     parser.add_argument('-o', '--output-dir', default=base_dir, help='Output directory path')
     parser.add_argument('-v', '--version', action='version', version=version.__version__, help='Print version')
     parser.add_argument('--min-length', default=4, help='Minimal length for a password when merging lists')
@@ -44,16 +48,14 @@ def get_parser():
     parser.add_argument('--bin-combinator', default='combinator.bin', help='Hashcat utils `combinator` binary')
     parser.add_argument('--bin-rli2', default='rli2.bin', help='Hashcat utils `rli2` binary')
     verbosity = parser.add_mutually_exclusive_group()
-    verbosity.add_argument('-d', '--debug', action='store_const', dest='loglevel', const=logs.logging.DEBUG, default=logs.logging.INFO, help='Debug mode')
-    verbosity.add_argument('-q', '--quiet', action='store_const', dest='loglevel', const=logs.logging.NOTSET, default=logs.logging.INFO, help='Quiet mode')
+    verbosity.add_argument('-d', '--debug', action='store_const', dest='loglevel', const=logs.logging.DEBUG, default=logs.logging.INFO)
+    verbosity.add_argument('-q', '--quiet', action='store_const', dest='loglevel', const=logs.logging.NOTSET, default=logs.logging.INFO)
     return parser
 
 
 def run(parser, args):
     parsed = parser.parse_args(args)
     logs.init(parsed.loglevel)
-    if parsed.temp_dir is None:
-        parsed.temp_dir = tempfile.mkdtemp()
     CombinatorClass = class_import(parsed.path)
     combinator = CombinatorClass(
         parsed.base_dir,
