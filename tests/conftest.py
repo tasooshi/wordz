@@ -1,14 +1,13 @@
+import pathlib
 import tempfile
 import shutil
 
 import pytest
 
-from pathlib import Path
-
 
 @pytest.fixture
 def cwd():
-    return Path(__file__).parent
+    return pathlib.Path(__file__).parent
 
 
 @pytest.fixture(scope='function')

@@ -1,11 +1,16 @@
+import concurrent.futures
 import datetime
 import functools
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 
 from wordz import logs
+
+
+os.environ['LC_ALL'] = 'C'
 
 
 class Combinator:
@@ -23,8 +28,8 @@ class Combinator:
             logs.logger.error(f'Temporary directory `{temp_dir}` does not exist!')
             self.checks_ok = False
         self.base_dir = base_dir
-        self.temp_dir = temp_dir
-        self.output_dir = output_dir
+        self.temp_dir = pathlib.Path(temp_dir).absolute()
+        self.output_dir = pathlib.Path(output_dir).absolute()
         self.min_length = min_length
         self.cores = cores
         self.memory = memory
@@ -35,6 +40,11 @@ class Combinator:
         self.check_which(self.bin_hashcat)
         self.check_which(self.bin_combinator)
         self.check_which(self.bin_rli2)
+        output = subprocess.run('comm --nocheck-order', shell=True, capture_output=True).stderr
+        if b'illegal option' in output:
+            self.comm_ver = 'comm'
+        else:
+            self.comm_ver = 'comm --nocheck-order'
         if not self.checks_ok:
             raise Exception('Failed on startup')
             sys.exit(1)
@@ -51,16 +61,23 @@ class Combinator:
                 return False
         return True
 
+    def ensure_path(self, destination):
+        dest_path = pathlib.Path(destination).parent
+        if not pathlib.Path.exists(dest_path):
+            logs.logger.debug(f'Creating directory `{destination}`')
+            dest_path.mkdir(parents=True)
+
     def run_shell(self, cmd):
-        logs.logger.debug(cmd)
-        return subprocess.run(f'(export LC_ALL=C; {cmd})', shell=True, stdout=subprocess.PIPE).stdout
+        logs.logger.debug(f' $ {cmd}')
+        subprocess.run(cmd, shell=True)
 
     def wordlists_process(self):
         if self.wordlists and self.rules:
             for rule in self.rules:
                 logs.logger.info(f'Processing wordlists with rules `{rule}`')
-                for wordlist in self.wordlists:
-                    self.rule(pathlib.Path(self.base_dir, wordlist), pathlib.Path(self.base_dir, rule))
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    for wordlist in self.wordlists:
+                        executor.submit(self.rule, pathlib.Path(self.base_dir, wordlist), pathlib.Path(self.base_dir, rule))
 
     def rule(self, wordlist, rule, dest_dir=None):
         if dest_dir is None:
@@ -81,15 +98,18 @@ class Combinator:
 
     def copy(self, source, destination):
         logs.logger.debug(f'Copying `{source}` to {destination}')
+        self.ensure_path(destination)
         shutil.copyfile(source, destination)
 
     def append(self, source, destination):
+        self.ensure_path(destination)
         if source.is_file():
             self.run_shell(f'cat {source} >> {destination}')
         else:
             logs.logger.warning(f'`{source}` not found!')
 
     def move(self, source, destination):
+        self.ensure_path(destination)
         logs.logger.debug(f'Moving `{source}` to {destination}')
         shutil.move(source, destination)
 
@@ -99,7 +119,7 @@ class Combinator:
 
     def compare(self, left, right, output, append=False):
         redir = '>>' if append else '>'
-        self.run_shell(f'comm -13 {left} {right} {redir} {output}')
+        self.run_shell(f'{self.comm_ver} -13 {left} {right} {redir} {output}')
 
     @functools.cache
     def temp(self, name):
@@ -125,47 +145,51 @@ class Combinator:
     def both(self, left, right):
         return self.combine(self.BOTH, left, right)
 
-    def combine(self, method, left, right, dest_dir=None):
-        if dest_dir is None:
-            dest_dir = self.temp_dir
+    def combine(self, method, left, right, destination=None):
+        if destination is None:
+            destination = self.temp_dir
+        self.ensure_path(destination)
         if self.exist(left, right):
             name = None
             if method is self.RIGHT:
                 name = f'{left.stem}+{right.stem}'
-                if not pathlib.Path(dest_dir, name + '.txt').is_file():
+                if not pathlib.Path(destination, name + '.txt').is_file():
                     logs.logger.info(f'Combining `{left.stem}` with `{right.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {left} {right} > {dest_dir}/{name}.txt')
+                    self.run_shell(f'{self.bin_combinator} {left} {right} > {destination}/{name}.txt')
             elif method is self.LEFT:
                 name = f'{right.stem}+{left.stem}'
-                if not pathlib.Path(dest_dir, name + '.txt').is_file():
+                if not pathlib.Path(destination, name + '.txt').is_file():
                     logs.logger.info(f'Combining `{right.stem}` with `{left.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {right} {left} > {dest_dir}/{right.stem}+{left.stem}.txt')
+                    self.run_shell(f'{self.bin_combinator} {right} {left} > {destination}/{name}.txt')
             elif method is self.BOTH:
                 name = f'{right.stem}+{left.stem}+{right.stem}'
-                if not pathlib.Path(dest_dir, f'{right.stem}+{left.stem}' + '.txt').is_file():
-                    self.run_shell(f'{self.bin_combinator} {right} {left} > {dest_dir}/{right.stem}+{left.stem}.txt')
-                if not pathlib.Path(dest_dir, name + '.txt').is_file():
+                if not pathlib.Path(destination, f'{right.stem}+{left.stem}' + '.txt').is_file():
+                    self.run_shell(f'{self.bin_combinator} {right} {left} > {destination}/{right.stem}+{left.stem}.txt')
+                if not pathlib.Path(destination, name + '.txt').is_file():
                     logs.logger.info(f'Combining `{left.stem}` with `{right.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {dest_dir}/{right.stem}+{left.stem}.txt {right} > {dest_dir}/{name}.txt')
+                    self.run_shell(f'{self.bin_combinator} {destination}/{right.stem}+{left.stem}.txt {right} > {destination}/{name}.txt')
             else:
                 raise NotImplementedError
             logs.logger.info(f'Combined `{name}`')
-            return pathlib.Path(dest_dir, name + '.txt')
+            return pathlib.Path(destination, name + '.txt')
 
     def merge(self, destination, wordlists, compare=None):
         logs.logger.info(f'Merging: {destination}')
-        output_temp = self.temp(destination.stem)
-        wordlists_arg = list()
+        self.ensure_path(destination)
+        output_temp = self.temp(destination.stem + '.txt')
+        wordlists = [words for words in wordlists if words is not None]
         for wordlist in wordlists:
-            if wordlist is None:
-                continue
             if wordlist.stat().st_size == 0:
                 raise Exception(f'Wordlist {wordlist} is empty, something is not right. Aborting')
-            wordlists_arg.append(str(wordlist))
-        wordlists_arg = ' '.join(wordlists_arg)
-        # NOTE: Passing too many big files to sort directly leads to random segfaults.
         self.delete(destination)
-        sort_cmd = f'awk "length >= {self.min_length}" {wordlists_arg} | {self.sort_snippet} | uniq > '
+        trimmed = list()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            for wordlist in wordlists:
+                trimmed_temp = self.temp(pathlib.Path(self.temp_dir, 'trimmed-' + wordlist.name))
+                trimmed.append(trimmed_temp)
+                executor.submit(self.run_shell, f'awk "length >= {self.min_length}" {wordlist} > {trimmed_temp}')
+        trimmed_joined = ' '.join([str(path) for path in trimmed])
+        sort_cmd = f'cat {trimmed_joined} | {self.sort_snippet} | uniq > '
         if compare:
             self.run_shell(f'{sort_cmd} {output_temp}')
             self.run_shell(f'{self.bin_rli2} {output_temp} {compare} >> {destination}')
@@ -177,6 +201,7 @@ class Combinator:
     def concat(self, destination, wordlists):
         logs.logger.debug(f'Concatenating: {destination}')
         self.delete(destination)
+        self.ensure_path(destination)
         for wordlist in wordlists:
             self.append(wordlist, destination)
 

@@ -1,19 +1,16 @@
-#!/usr/bin/env python3
 import pathlib
 import setuptools
 
 
 def from_file(*names, encoding='utf8'):
-    with open(
-        pathlib.Path(pathlib.Path(__file__).parent, *names),
-        encoding=encoding
-    ) as fil:
-        return fil.read()
+    return pathlib.Path(
+        pathlib.Path(__file__).parent, *names
+    ).read_text(encoding=encoding)
 
 
 version = {}
-with open('src/wordz/version.py') as fil:
-    exec(fil.read(), version)
+contents = pathlib.Path('src/wordz/version.py').read_text()
+exec(contents, version)
 
 
 setuptools.setup(
@@ -22,6 +19,7 @@ setuptools.setup(
     description='Wordlists builder',
     long_description=from_file('README.md'),
     long_description_content_type='text/markdown',
+    license='BSD License',
     url='https://github.com/tasooshi/wordz',
     author='tasooshi',
     author_email='tasooshi@pm.me',
