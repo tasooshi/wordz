@@ -1,11 +1,13 @@
 import concurrent.futures
 import datetime
 import functools
+import hashlib
 import os
 import pathlib
 import shutil
 import subprocess
 import sys
+import uuid
 
 from wordz import logs
 
@@ -85,7 +87,7 @@ class Combinator:
         filename = f'{rule.stem}-{wordlist.parts[-2]}-{wordlist.stem}.txt'
         if not pathlib.Path(dest_dir, filename).is_file():
             logs.logger.info(f'Processing `{wordlist}` with rule `{rule}`')
-            self.run_shell(f'{self.bin_hashcat} --stdout -r {rule} {wordlist} | {self.sort_snippet} | uniq > {dest_dir}/{filename}')
+            self.run_shell(f'{self.bin_hashcat} --stdout --session={uuid.uuid4()} -r {rule} {wordlist} | {self.sort_snippet} | uniq > {dest_dir}/{filename}')
         return pathlib.Path(f'{dest_dir}/{filename}')
 
     def sort(self, source, output=None, unique=False):
@@ -116,6 +118,12 @@ class Combinator:
     def delete(self, destination):
         logs.logger.debug(f'Deleting `{destination}`')
         pathlib.Path.unlink(destination, missing_ok=True)
+
+    def delete_all(self, starts_with, destination):
+        logs.logger.debug(f'Deleting all files starting with `{starts_with}` from `{destination}`')
+        to_delete = destination.glob(starts_with + '*')
+        for fil in to_delete:
+            pathlib.Path.unlink(fil)
 
     def compare(self, left, right, output, append=False):
         redir = '>>' if append else '>'
@@ -173,30 +181,47 @@ class Combinator:
             logs.logger.info(f'Combined `{name}`')
             return pathlib.Path(destination, name + '.txt')
 
+    def split(self, wordlists, job_id):
+        half_no = len(wordlists) / 2
+        split_idx = int(half_no)
+        output_name = hashlib.md5('+'.join([pathlib.Path(itm).stem for itm in wordlists]).encode('ASCII')).hexdigest()
+        output = self.temp(f'{job_id}-split-' + output_name + '.txt')
+        if half_no >= 2:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = [
+                    executor.submit(self.split, wordlists[:split_idx], job_id).result(),
+                    executor.submit(self.split, wordlists[split_idx:], job_id).result(),
+                ]
+            joined = ' '.join([str(pth) for pth in results])
+        else:
+            joined = ' '.join([str(pth) for pth in wordlists])
+        self.run_shell(f'cat {joined} | {self.sort_snippet} | uniq > {output}')
+        return output
+
     def merge(self, destination, wordlists, compare=None):
         logs.logger.info(f'Merging: {destination}')
         self.ensure_path(destination)
-        output_temp = self.temp(destination.stem + '.txt')
         wordlists = [words for words in wordlists if words is not None]
         for wordlist in wordlists:
             if wordlist.stat().st_size == 0:
                 raise Exception(f'Wordlist {wordlist} is empty, something is not right. Aborting')
         self.delete(destination)
+        job_id = str(uuid.uuid4())[:8]
         trimmed = list()
         with concurrent.futures.ThreadPoolExecutor() as executor:
             for wordlist in wordlists:
-                trimmed_temp = self.temp(pathlib.Path(self.temp_dir, 'trimmed-' + wordlist.name))
+                trimmed_temp = self.temp(pathlib.Path(self.temp_dir, job_id + '-trimmed-' + wordlist.name))
                 trimmed.append(trimmed_temp)
                 executor.submit(self.run_shell, f'awk "length >= {self.min_length}" {wordlist} > {trimmed_temp}')
-        trimmed_joined = ' '.join([str(path) for path in trimmed])
-        sort_cmd = f'cat {trimmed_joined} | {self.sort_snippet} | uniq > '
+        output_temp = self.split(trimmed, job_id)
         if compare:
-            self.run_shell(f'{sort_cmd} {output_temp}')
             self.run_shell(f'{self.bin_rli2} {output_temp} {compare} >> {destination}')
             self.append(destination, compare)
             self.sort(compare)
         else:
-            self.run_shell(f'{sort_cmd} {destination}')
+            self.move(output_temp, destination)
+        # NOTE: Case when temporary files are really not needed.
+        self.delete_all(job_id, self.temp_dir)
 
     def concat(self, destination, wordlists):
         logs.logger.debug(f'Concatenating: {destination}')
