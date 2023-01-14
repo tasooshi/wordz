@@ -60,8 +60,8 @@ def test_import_class_exceptions(cwd):
     assert exc_info.match('Class not found')
 
 
-def test_quiet(cwd, tmp_dir, caplog):
-    args = shlex.split(f'-p {cwd}/data/classes.py::Passwords -q -t {tmp_dir}')
+def test_quiet(cwd, tmp_dir, out_dir, caplog):
+    args = shlex.split(f'-p {cwd}/data/classes.py::Passwords -q -t {tmp_dir} -o {out_dir}')
     parser = cli.get_parser()
     cli.run(parser, args)
     assert caplog.text == ''

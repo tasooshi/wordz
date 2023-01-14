@@ -181,22 +181,6 @@ class Combinator:
             logs.logger.info(f'Combined `{name}`')
             return pathlib.Path(destination, name + '.txt')
 
-    def split(self, wordlists, job_id):
-        half_no = len(wordlists) / 2
-        split_idx = int(half_no)
-        output_name = hashlib.md5('+'.join([pathlib.Path(itm).stem for itm in wordlists]).encode('ASCII')).hexdigest()
-        output = self.temp(f'{job_id}-split-' + output_name + '.txt')
-        if half_no >= 2:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = [
-                    executor.submit(self.split, wordlists[:split_idx], job_id).result(),
-                    executor.submit(self.split, wordlists[split_idx:], job_id).result(),
-                ]
-            joined = ' '.join([str(pth) for pth in results])
-        else:
-            joined = ' '.join([str(pth) for pth in wordlists])
-        self.run_shell(f'cat {joined} | {self.sort_snippet} | uniq > {output}')
-        return output
 
     def merge(self, destination, wordlists, compare=None):
         logs.logger.info(f'Merging: {destination}')
@@ -213,13 +197,16 @@ class Combinator:
                 trimmed_temp = self.temp(pathlib.Path(self.temp_dir, job_id + '-trimmed-' + wordlist.name))
                 trimmed.append(trimmed_temp)
                 executor.submit(self.run_shell, f'awk "length >= {self.min_length}" {wordlist} > {trimmed_temp}')
-        output_temp = self.split(trimmed, job_id)
+        trimmed_joined = ' '.join([str(path) for path in trimmed])
+        sort_cmd = f'cat {trimmed_joined} | {self.sort_snippet} | uniq > '
         if compare:
+            output_temp = self.temp(destination.stem + '.txt')
+            self.run_shell(f'{sort_cmd} {output_temp}')
             self.run_shell(f'{self.bin_rli2} {output_temp} {compare} >> {destination}')
             self.append(destination, compare)
             self.sort(compare)
         else:
-            self.move(output_temp, destination)
+            self.run_shell(f'{sort_cmd} {destination}')
         # NOTE: Case when temporary files are really not needed.
         self.delete_all(job_id, self.temp_dir)
 
