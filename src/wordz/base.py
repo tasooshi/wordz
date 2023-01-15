@@ -35,7 +35,8 @@ class Combinator:
         self.min_length = min_length
         self.cores = cores
         self.memory = memory
-        self.sort_snippet = f'sort -f -T {self.temp_dir} --parallel={cores} -S {memory}'
+        self.compress_program = '--compress-program=lzop' if shutil.which('lzop') else ''
+        self.sort_snippet = f'sort -f -T {self.temp_dir} {self.compress_program} --parallel={cores} -S {memory}'
         self.bin_hashcat = bin_hashcat
         self.bin_combinator = bin_combinator
         self.bin_rli2 = bin_rli2
@@ -91,12 +92,18 @@ class Combinator:
         return pathlib.Path(f'{dest_dir}/{filename}')
 
     def sort(self, source, output=None, unique=False):
-        if output is None:
-            output = source
-        cmd = f'{self.sort_snippet} {source} -o {output}'
+        cmd = f'{self.sort_snippet} {source}'
         if unique:
             cmd += ' -u'
-        self.run_shell(cmd)
+        if output is None:
+            tmp_output = self.temp(source.stem + '-sort-tmp-replace.txt')
+            cmd += f' -o {tmp_output}'
+            self.run_shell(cmd)
+            self.delete(source)
+            self.move(tmp_output, source)
+        else:
+            cmd += f' -o {output}'
+            self.run_shell(cmd)
 
     def copy(self, source, destination):
         logs.logger.debug(f'Copying `{source}` to {destination}')
@@ -190,11 +197,11 @@ class Combinator:
             if wordlist.stat().st_size == 0:
                 raise Exception(f'Wordlist {wordlist} is empty, something is not right. Aborting')
         self.delete(destination)
-        job_id = str(uuid.uuid4())[:8]
+        job_id = hashlib.md5(str(destination).encode('ASCII')).hexdigest()
         trimmed = list()
         with concurrent.futures.ThreadPoolExecutor() as executor:
             for wordlist in wordlists:
-                trimmed_temp = self.temp(pathlib.Path(self.temp_dir, job_id + '-trimmed-' + wordlist.name))
+                trimmed_temp = self.temp(job_id + '-trimmed-' + wordlist.name)
                 trimmed.append(trimmed_temp)
                 executor.submit(self.run_shell, f'awk "length >= {self.min_length}" {wordlist} > {trimmed_temp}')
         trimmed_joined = ' '.join([str(path) for path in trimmed])

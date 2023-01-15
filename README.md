@@ -15,6 +15,10 @@ This tool evolved from the helper scripts used for the [brutas](https://github.c
 * `hashcat-utils`
 * GNU tools: `cat`, `awk`, `comm`, `sort`, `uniq`
 
+### Recommended
+
+* If `lzop` is detected it will be used by `sort` to compress temporary file, especially useful with large datasets.
+
 ## Usage
 
 ### Sources
