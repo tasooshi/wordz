@@ -23,6 +23,7 @@ class Combinator:
     LEFT = 1
     BOTH = 2
     RIGHT = 3
+    DEFAULT_EXT = '.txt'
 
     def __init__(self, base_dir, temp_dir, output_dir, min_length, cores, memory, bin_hashcat, bin_combinator, bin_rli2):
         self.checks_ok = True
@@ -50,7 +51,6 @@ class Combinator:
             self.comm_ver = 'comm --nocheck-order'
         if not self.checks_ok:
             raise Exception('Failed on startup')
-            sys.exit(1)
 
     def check_which(self, name):
         if not shutil.which(pathlib.Path(name)):
@@ -85,22 +85,23 @@ class Combinator:
     def rule(self, wordlist, rule, dest_dir=None):
         if dest_dir is None:
             dest_dir = self.temp_dir
-        filename = f'{rule.stem}-{wordlist.parts[-2]}-{wordlist.stem}.txt'
-        if not pathlib.Path(dest_dir, filename).is_file():
+        filename = f'{rule.stem}-{wordlist.parts[-2]}-{wordlist.stem}{self.DEFAULT_EXT}'
+        destination = pathlib.Path(dest_dir, filename)
+        if not destination.is_file():
             logs.logger.info(f'Processing `{wordlist}` with rule `{rule}`')
-            self.run_shell(f'{self.bin_hashcat} --stdout --session={uuid.uuid4()} -r {rule} {wordlist} | {self.sort_snippet} | uniq > {dest_dir}/{filename}')
-        return pathlib.Path(f'{dest_dir}/{filename}')
+            self.run_shell(f'{self.bin_hashcat} --stdout --session={uuid.uuid4()} -r {rule} {wordlist} | {self.sort_snippet} | uniq > {destination}')
+        return destination
 
     def sort(self, source, output=None, unique=False):
         cmd = f'{self.sort_snippet} {source}'
         if unique:
             cmd += ' -u'
         if output is None:
-            tmp_output = self.temp(source.stem + '-sort-tmp-replace.txt')
-            cmd += f' -o {tmp_output}'
+            output = self.temp(source.stem + '-sort-tmp-replace' + self.DEFAULT_EXT)
+            cmd += f' -o {output}'
             self.run_shell(cmd)
             self.delete(source)
-            self.move(tmp_output, source)
+            self.move(output, source)
         else:
             cmd += f' -o {output}'
             self.run_shell(cmd)
@@ -160,34 +161,29 @@ class Combinator:
     def both(self, left, right):
         return self.combine(self.BOTH, left, right)
 
-    def combine(self, method, left, right, destination=None):
-        if destination is None:
-            destination = self.temp_dir
-        self.ensure_path(destination)
+    def combine(self, method, left, right):
         if self.exist(left, right):
-            name = None
             if method is self.RIGHT:
-                name = f'{left.stem}+{right.stem}'
-                if not pathlib.Path(destination, name + '.txt').is_file():
+                destination = pathlib.Path(self.temp_dir, f'{left.stem}+{right.stem}{self.DEFAULT_EXT}')
+                if not destination.is_file():
                     logs.logger.info(f'Combining `{left.stem}` with `{right.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {left} {right} > {destination}/{name}.txt')
+                    self.run_shell(f'{self.bin_combinator} {left} {right} > {destination}')
             elif method is self.LEFT:
-                name = f'{right.stem}+{left.stem}'
-                if not pathlib.Path(destination, name + '.txt').is_file():
+                destination = pathlib.Path(self.temp_dir, f'{right.stem}+{left.stem}{self.DEFAULT_EXT}')
+                if not destination.is_file():
                     logs.logger.info(f'Combining `{right.stem}` with `{left.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {right} {left} > {destination}/{name}.txt')
+                    self.run_shell(f'{self.bin_combinator} {right} {left} > {destination}')
             elif method is self.BOTH:
-                name = f'{right.stem}+{left.stem}+{right.stem}'
-                if not pathlib.Path(destination, f'{right.stem}+{left.stem}' + '.txt').is_file():
-                    self.run_shell(f'{self.bin_combinator} {right} {left} > {destination}/{right.stem}+{left.stem}.txt')
-                if not pathlib.Path(destination, name + '.txt').is_file():
+                if not pathlib.Path(self.temp_dir, f'{right.stem}+{left.stem}{self.DEFAULT_EXT}').is_file():
+                    self.run_shell(f'{self.bin_combinator} {right} {left} > {self.temp_dir}/{right.stem}+{left.stem}{self.DEFAULT_EXT}')
+                destination = pathlib.Path(self.temp_dir, f'{right.stem}+{left.stem}+{right.stem}{self.DEFAULT_EXT}')
+                if not destination.is_file():
                     logs.logger.info(f'Combining `{left.stem}` with `{right.stem}`')
-                    self.run_shell(f'{self.bin_combinator} {destination}/{right.stem}+{left.stem}.txt {right} > {destination}/{name}.txt')
+                    self.run_shell(f'{self.bin_combinator} {self.temp_dir}/{right.stem}+{left.stem}{self.DEFAULT_EXT} {right} > {destination}')
             else:
                 raise NotImplementedError
-            logs.logger.info(f'Combined `{name}`')
-            return pathlib.Path(destination, name + '.txt')
-
+            logs.logger.info(f'Combined `{destination}`')
+            return destination
 
     def merge(self, destination, wordlists, compare=None):
         logs.logger.info(f'Merging: {destination}')
@@ -201,13 +197,13 @@ class Combinator:
         trimmed = list()
         with concurrent.futures.ThreadPoolExecutor() as executor:
             for wordlist in wordlists:
-                trimmed_temp = self.temp(job_id + '-trimmed-' + wordlist.name)
+                trimmed_temp = self.temp(job_id + '-trimmed-' + wordlist.name + self.DEFAULT_EXT)
                 trimmed.append(trimmed_temp)
                 executor.submit(self.run_shell, f'awk "length >= {self.min_length}" {wordlist} > {trimmed_temp}')
         trimmed_joined = ' '.join([str(path) for path in trimmed])
         sort_cmd = f'cat {trimmed_joined} | {self.sort_snippet} | uniq > '
         if compare:
-            output_temp = self.temp(destination.stem + '.txt')
+            output_temp = self.temp(destination.stem + self.DEFAULT_EXT)
             self.run_shell(f'{sort_cmd} {output_temp}')
             self.run_shell(f'{self.bin_rli2} {output_temp} {compare} >> {destination}')
             self.append(destination, compare)
@@ -225,11 +221,11 @@ class Combinator:
             self.append(wordlist, destination)
 
     def diff(self, path, list_prefix, left='basic', right='extended', output='all'):
-        left_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{left}.txt')
-        right_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{right}.txt')
-        output_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{output}.txt')
-        left_temp = self.temp(f'{list_prefix}-diff-{left}.txt')
-        right_temp = self.temp(f'{list_prefix}-diff-{right}.txt')
+        left_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{left}{self.DEFAULT_EXT}')
+        right_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{right}{self.DEFAULT_EXT}')
+        output_fil = pathlib.Path(self.base_dir, path, f'{list_prefix}-{output}{self.DEFAULT_EXT}')
+        left_temp = self.temp(f'{list_prefix}-diff-{left}{self.DEFAULT_EXT}')
+        right_temp = self.temp(f'{list_prefix}-diff-{right}{self.DEFAULT_EXT}')
         self.sort(left_fil, left_temp)
         self.sort(right_fil, right_temp)
         self.compare(left_temp, right_temp, right_fil)
@@ -251,6 +247,7 @@ class Combinator:
         time_total = datetime.datetime.now() - time_start
         logs.logger.info(f'Total time: {time_total}')
         logs.logger.info(f'Done! You may want to clean up the temporary directory yourself: {self.temp_dir}')
+        logs.logger.info(f'Make sure to remove the temporary files used for comparing if you plan to re-run the process.')
 
     def setup(self):
         self.wordlists_process()

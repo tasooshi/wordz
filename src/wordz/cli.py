@@ -26,6 +26,7 @@ def class_import(path):
     else:
         return cls
 
+
 def get_parser():
     cpu_count = multiprocessing.cpu_count()
     if cpu_count > 1:
@@ -56,8 +57,8 @@ def get_parser():
 def run(parser, args):
     parsed = parser.parse_args(args)
     logs.init(parsed.loglevel)
-    CombinatorClass = class_import(parsed.path)
-    combinator = CombinatorClass(
+    combinator_cls = class_import(parsed.path)
+    combinator = combinator_cls(
         parsed.base_dir,
         parsed.temp_dir,
         parsed.output_dir,
