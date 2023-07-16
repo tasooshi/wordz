@@ -1,9 +1,10 @@
+*.egg-info/
+.coverage
+.DS_Store
 .pytest_cache
+.tox
 .venv
 __pycache__
-.DS_Store
-*.egg-info/
 build/
 dist/
-.tox
-.coverage
+htmlcov

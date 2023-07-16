@@ -36,7 +36,7 @@ class Combinator:
         self.cores = cores
         self.memory = memory
         self.compress_program = '--compress-program=lzop' if shutil.which('lzop') else ''
-        self.sort_snippet = f'sort -f -T {self.temp_dir} {self.compress_program} --parallel={cores} -S {memory}'
+        self.sort_snippet = f'sort -T {self.temp_dir} {self.compress_program} --parallel={cores} -S {memory}'
         self.bin_hashcat = bin_hashcat
         self.bin_combinator = bin_combinator
         self.bin_rli2 = bin_rli2

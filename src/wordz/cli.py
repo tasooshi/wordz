@@ -3,7 +3,6 @@ import importlib.util
 import multiprocessing
 import pathlib
 import sys
-import tempfile
 
 from wordz import (
     logs,
