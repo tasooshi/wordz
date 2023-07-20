@@ -76,11 +76,11 @@ def main():
     try:
         run(parser, sys.argv[1:])
     except Exception as exc:
-        logs.logger.error(exc)
-        parser.error(exc)
+        logs.logger.error(f'Error: {exc}')
+        sys.exit(1)
     except KeyboardInterrupt:
         logs.logger.info(f'Exiting')
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()

@@ -183,6 +183,11 @@ class Combinator:
                 raise NotImplementedError
             logs.logger.info(f'Combined `{destination}`')
             return destination
+        else:
+            if self.exist(left):
+                raise Exception(f'Path {right} does not exist. Aborting')
+            else:
+                raise Exception(f'Path {left} does not exist. Aborting')
 
     def merge(self, destination, wordlists, compare=None):
         logs.logger.info(f'Merging: {destination}')
